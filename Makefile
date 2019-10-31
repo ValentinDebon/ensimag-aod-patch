@@ -1,5 +1,5 @@
-CC=clang
-CFLAGS=-g -Wall -fPIC
+CC=clang++
+CFLAGS=-g -Wall -std=c++11
 LDFLAGS=
 
 COMPUTEPATCHOPT=bin/computePatchOpt
@@ -17,6 +17,6 @@ test: $(COMPUTEPATCHOPT)
 bin:
 	mkdir $@
 
-bin/%: src/%.c bin
+bin/%: src/%.cc bin
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $<
 
