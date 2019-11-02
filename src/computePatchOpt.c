@@ -15,11 +15,16 @@ struct file_mapping {
 	size_t lines;
 };
 
-struct patch_costs {
-	cost_t *table;
-	size_t capacity;
-	size_t row;
+struct patch_cost {
+	cost_t cost;
 };
+
+static size_t
+line_length(const char *line, const char *end) {
+	const char * const next = memchr(line, '\n', end - line);
+
+	return (next != NULL ? next : end) - line;
+}
 
 static struct file_mapping
 file_mapping_create(const char *file) {
@@ -36,65 +41,19 @@ file_mapping_create(const char *file) {
 
 	close(fd);
 
-	return (struct file_mapping) {
+	struct file_mapping mapping = {
 		.begin = mmaped,
 		.end = (const char *)mmaped + st.st_size,
 		.lines = 0
 	};
-}
 
-static size_t
-line_length(const char *line, const char *end) {
-	const char * const next = memchr(line, '\n', end - line);
-
-	return (next != NULL ? next : end) - line;
-}
-
-static cost_t
-patch_costs_get(const struct patch_costs *costs, size_t i, size_t j) {
-
-	if(j == 0) {
-		return i * 10;
-	} else {
-		return costs->table[i * costs->row + j - 1];
-	}
-}
-
-static cost_t
-patch_costs_set(struct patch_costs *costs, size_t i, size_t j, cost_t cost) {
-
-}
-
-static const patch_costs
-patch_costs_compute(struct file_mapping *source,
-	struct file_mapping *destination) {
-	struct patch_costs costs = { .table = NULL, .capacity = 0, .row = 0 };
-	const char *dline = destination->begin;
-	size_t i, j = 0;
-
-	while(dline < destination->end) {
-		const size_t dlength = line_length(dline, destination->end);
-		const char *sline = source->begin;
-		i = 0;
-		j++;
-
-		while(sline < source->end) {
-			const size_t slength = line_length(sline, source->end);
-
-			i++;
-			sline += slength + 1;
-		}
-
-		dline += dlength + 1;
+	const char *line = mapping.begin;
+	while(line < mapping.end) {
+		mapping.lines++;
+		line += line_length(line, mapping.end) + 1;
 	}
 
-	/* TODO: handle if destination 0 */
-
-	source->lines = i;
-	destination->lines = j;
-	printf("%zu %zu\n", source->lines, destination->lines);
-
-	return costs;
+	return mapping;
 }
 
 static FILE *
@@ -108,9 +67,68 @@ patch_fopen(const char *file) {
 	return output;
 }
 
+static struct patch_cost *
+patch_costs_empty_source(struct patch_cost *costs,
+	const struct file_mapping *destination) {
+	const char *line = destination->begin;
+	size_t costsum = 0;
+
+	while(line < destination->end) {
+		const size_t length = line_length(line, destination->end);
+
+		costsum += 10 + length;
+		costs->cost = costsum;
+		costs++;
+
+		line += length + 1;
+	}
+
+	return costs;
+}
+
+static const struct patch_cost *
+patch_costs(const struct file_mapping *source,
+	const struct file_mapping *destination) {
+	struct patch_cost *costs = malloc(destination->lines * (source->lines + 1) * sizeof(*costs));
+	struct patch_cost *iterator = patch_costs_empty_source(costs, destination);
+	const char *line = source->begin;
+	size_t i = 1;
+
+	do {
+		const size_t length = line_length(line, source->end);
+
+		i++;
+		line += length + 1;
+	} while(line < source->end);
+
+	return costs;
+}
+
 static void
-patch_compute(FILE *patch, const struct patch_costs *costs,
-	size_t sourcelines, size_t destinationlines) {
+patch_print_case_empty_source(FILE *patch, const struct file_mapping *destination) {
+	const char *line = destination->begin;
+
+	while(line < destination->end) {
+		const size_t length = line_length(line, destination->end);
+		fputs("+ 0\n", patch);
+		fwrite(line, length, 1, patch);
+		fputc('\n', patch);
+		line += length + 1;
+	}
+}
+
+static void
+patch_print_case_empty_destination(FILE *patch, const struct file_mapping *source) {
+	const char *line = source->begin;
+	size_t i = 1;
+
+	while(line < source->end) {
+		const size_t length = line_length(line, source->end);
+		fprintf(patch, "- %zu\n", i);
+		fwrite(line, length, 1, patch);
+		fputc('\n', patch);
+		line += length + 1;
+	}
 }
 
 int
@@ -118,11 +136,17 @@ main(int argc, char **argv) {
 	if(argc == 4) {
 		struct file_mapping source = file_mapping_create(argv[1]);
 		struct file_mapping destination = file_mapping_create(argv[2]);
-		const struct patch_costs costs = patch_costs_compute(&source, &destination);
 		FILE *patch = patch_fopen(argv[3]);
 
-		patch_compute(patch, &costs, source.lines, destination.lines);
-
+		if(destination.lines != 0) {
+			if(source.lines != 0) {
+				const struct patch_cost *costs = patch_costs(&source, &destination);
+			} else {
+				patch_print_case_empty_source(patch, &destination);
+			}
+		} else {
+			patch_print_case_empty_destination(patch, &source);
+		}
 	} else {
 		fprintf(stderr, "usage: %s <source> <destination> <patch>\n", *argv);
 		return EXIT_FAILURE;
