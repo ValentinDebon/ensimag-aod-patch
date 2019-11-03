@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/mman.h>
@@ -13,10 +14,6 @@ struct file_mapping {
 	const char * const begin;
 	const char * const end;
 	size_t lines;
-};
-
-struct patch_cost {
-	cost_t cost;
 };
 
 static size_t
@@ -67,8 +64,8 @@ patch_fopen(const char *file) {
 	return output;
 }
 
-static struct patch_cost *
-patch_costs_empty_source(struct patch_cost *costs,
+static cost_t *
+patch_costs_empty_source(cost_t *costs,
 	const struct file_mapping *destination) {
 	const char *line = destination->begin;
 	size_t costsum = 0;
@@ -77,7 +74,7 @@ patch_costs_empty_source(struct patch_cost *costs,
 		const size_t length = line_length(line, destination->end);
 
 		costsum += 10 + length;
-		costs->cost = costsum;
+		*costs = costsum;
 		costs++;
 
 		line += length + 1;
@@ -86,16 +83,43 @@ patch_costs_empty_source(struct patch_cost *costs,
 	return costs;
 }
 
-static const struct patch_cost *
+static inline size_t
+min(size_t a, size_t b) {
+	return a < b ? a : b;
+}
+
+static bool
+line_equals(const char *line1, size_t length1,
+	const char *line2, size_t length2) {
+	return length1 == length2 && memcmp(line1, line2, length1) == 0;
+}
+
+static const cost_t *
 patch_costs(const struct file_mapping *source,
 	const struct file_mapping *destination) {
-	struct patch_cost *costs = malloc(destination->lines * (source->lines + 1) * sizeof(*costs));
-	struct patch_cost *iterator = patch_costs_empty_source(costs, destination);
+	cost_t *costs = malloc(destination->lines * (source->lines + 1) * sizeof(*costs));
+	cost_t *iterator = patch_costs_empty_source(costs, destination);
 	const char *line = source->begin;
 	size_t i = 1;
 
 	do {
 		const size_t length = line_length(line, source->end);
+		*iterator = min(10 * i, line_equals(line, length, destination->begin, *costs - 10) ? *costs : 0);
+		iterator++;
+
+		for(size_t j = 1; j < destination->lines; j++) {
+			const size_t costb = costs[j] - costs[j - 1];
+			const cost_t append = iterator[-1] + costb;
+			const cost_t removal = iterator[-destination->lines] + 10;
+			cost_t substitution = iterator[-destination->lines - 1];
+
+			if(!line_equals(line, length, destination->begin + costs[j - 1] - 10 * j, costb - 10)) {
+				substitution += costb;
+			}
+
+			*iterator = min(min(append, removal), substitution);
+			iterator++;
+		}
 
 		i++;
 		line += length + 1;
@@ -140,7 +164,15 @@ main(int argc, char **argv) {
 
 		if(destination.lines != 0) {
 			if(source.lines != 0) {
-				const struct patch_cost *costs = patch_costs(&source, &destination);
+				const cost_t *costs = patch_costs(&source, &destination);
+
+				for(size_t i = 0; i <= source.lines; i++) {
+					printf("%4zu: %4zu ", i, i * 10);
+					for(size_t j = 0; j < destination.lines; j++) {
+						printf("%4zu ", costs[i * destination.lines + j]);
+					}
+					putchar('\n');
+				}
 			} else {
 				patch_print_case_empty_source(patch, &destination);
 			}
