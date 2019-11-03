@@ -16,6 +16,23 @@ struct file_mapping {
 	size_t lines;
 };
 
+struct patch {
+	struct patch *next;
+	size_t i;
+	size_t j;
+};
+
+static struct patch *
+patch_create(size_t i, size_t j, struct patch *next) {
+	struct patch *patch = malloc(sizeof(*patch));
+
+	patch->next = next;
+	patch->i = i;
+	patch->j = j;
+
+	return patch;
+}
+
 static size_t
 line_length(const char *line, const char *end) {
 	const char * const next = memchr(line, '\n', end - line);
@@ -91,11 +108,6 @@ min(cost_t a, cost_t b) {
 static bool
 line_equals(const char *line1, size_t length1,
 	const char *line2, size_t length2) {
-	fputs("comparing: \"", stdout);
-	fwrite(line1, length1, 1, stdout);
-	fputs("\" to \"", stdout);
-	fwrite(line2, length2, 1, stdout);
-	fputs("\"\n", stdout);
 	return length1 == length2 && memcmp(line1, line2, length1) == 0;
 }
 
@@ -123,8 +135,6 @@ patch_costs(const struct file_mapping *source,
 				substitution += costb;
 			}
 
-			printf("(%zu, %zu): min(%zu, %zu, %zu) (Lb%zu: %zu)\n", i, j + 1, append, removal, substitution, j + 1, costb);
-
 			*iterator = min(min(append, removal), substitution);
 			iterator++;
 		}
@@ -134,6 +144,71 @@ patch_costs(const struct file_mapping *source,
 	} while(line < source->end);
 
 	return costs;
+}
+
+static inline void
+patch_print_addition(FILE *patch, size_t noline, const char *line, size_t length) {
+	fprintf(patch, "+ %zu\n", noline);
+	fwrite(line, length, 1, patch);
+	fputc('\n', patch);
+}
+
+static inline void
+patch_print_removal(FILE *patch, size_t noline, const char *line, size_t length) {
+	fprintf(patch, "- %zu\n", noline);
+	fwrite(line, length, 1, patch);
+	fputc('\n', patch);
+}
+
+static inline void
+patch_print_substitution(FILE *patch, size_t noline,
+	const char *oldline, size_t oldlength,
+	const char *newline, size_t newlength) {
+	fprintf(patch, "- %zu\n", noline);
+	fwrite(oldline, oldlength, 1, patch);
+	fputc('\n', patch);
+	fwrite(newline, newlength, 1, patch);
+	fputc('\n', patch);
+}
+
+static void
+patch_print(FILE *patch, const cost_t *costs,
+	const struct file_mapping *source, const struct file_mapping *destination) {
+	struct patch *patches = NULL;
+	size_t i = source->lines;
+	size_t j = destination->lines - 1;
+
+	while(i != 0 && j != 0) {
+		const cost_t *current = costs + i * destination->lines + j;
+		const cost_t cost = *current;
+
+		if(cost == *(current -= destination->lines + 1)) {
+			printf("source line %zu is identical to destination line %zu\n", i, j + 1);
+			i--;
+			j--;
+		} else if(cost == *++current + 10) {
+			printf("source line %zu is removed\n", i);
+			//patches = patch_create(i, j + 1, patches);
+			i--;
+		} else if(cost == *(current += destination->lines - 1) + costs[j] - costs[j - 1]) {
+			printf("destination line %zu is added after source line %zu\n", j + 1, i);
+			j--;
+		} else {
+			printf("destination line %zu replaces source line %zu\n", j + 1, i);
+			i--;
+			j--;
+		}
+	}
+
+	if(i == 0) {
+		while(j != 0) {
+			j--;
+		}
+	} else {
+		while(i != 0) {
+			i--;
+		}
+	}
 }
 
 static void
@@ -184,8 +259,8 @@ patch_costs_print(FILE *output, const cost_t *costs, size_t m, size_t n) {
 int
 main(int argc, char **argv) {
 	if(argc == 4) {
-		struct file_mapping source = file_mapping_create(argv[1]);
-		struct file_mapping destination = file_mapping_create(argv[2]);
+		const struct file_mapping source = file_mapping_create(argv[1]);
+		const struct file_mapping destination = file_mapping_create(argv[2]);
 		FILE *patch = patch_fopen(argv[3]);
 
 		if(destination.lines != 0) {
@@ -193,7 +268,7 @@ main(int argc, char **argv) {
 				const cost_t *costs = patch_costs(&source, &destination);
 
 				patch_costs_print(stdout, costs, source.lines, destination.lines);
-				//patch_print(patch, costs, source.lines, destination.lines);
+				patch_print(patch, costs, &source, &destination);
 			} else {
 				patch_print_case_empty_source(patch, &destination);
 			}
