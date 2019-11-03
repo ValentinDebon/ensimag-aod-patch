@@ -81,31 +81,42 @@ line_reach(const char **linep, size_t *lengthp, size_t *nolinep,
 static struct file_mapping
 file_mapping_create(const char *file) {
 	struct stat st;
-	void *mmaped;
-	int fd;
 
-	if((fd = open(file, O_RDONLY)) == -1
-		|| fstat(fd, &st) == -1
-		|| (mmaped = mmap(NULL, st.st_size,
+	if(stat(file, &st) == -1) {
+		err(EXIT_FAILURE, "file_mapping_create stat %s", file);
+	}
+
+	if(st.st_size != 0) {
+		int fd = open(file, O_RDONLY);
+		void *mmaped;
+
+		if(fd == -1 || (mmaped = mmap(NULL, st.st_size,
 			PROT_READ, MAP_PRIVATE, fd, 0)) == MAP_FAILED) {
-		err(EXIT_FAILURE, "file_mapping_create %s", file);
+			err(EXIT_FAILURE, "file_mapping_create open/mmap %s", file);
+		}
+
+		close(fd);
+
+		struct file_mapping mapping = {
+			.begin = mmaped,
+			.end = (const char *)mmaped + st.st_size,
+			.lines = 0
+		};
+		const char *line = mapping.begin;
+
+		while(line < mapping.end) {
+			mapping.lines++;
+			line += line_length(line, mapping.end) + 1;
+		}
+
+		return mapping;
+	} else {
+		return (struct file_mapping) {
+			.begin = NULL,
+			.end = NULL,
+			.lines = 0
+		};
 	}
-
-	close(fd);
-
-	struct file_mapping mapping = {
-		.begin = mmaped,
-		.end = (const char *)mmaped + st.st_size,
-		.lines = 0
-	};
-
-	const char *line = mapping.begin;
-	while(line < mapping.end) {
-		mapping.lines++;
-		line += line_length(line, mapping.end) + 1;
-	}
-
-	return mapping;
 }
 
 static FILE *
@@ -204,30 +215,35 @@ patch_compute(const cost_t *costs,
 		const cost_t *current = costs + i * destination->lines + j;
 		const cost_t cost = *current;
 
-		if(cost == *(current -= destination->lines + 1)) {
-			patches = patch_create(i, j, PATCH_ACTION_NONE, patches);
+		if(cost == current[-destination->lines] + COST_CONSTANT) {
+			patches = patch_create(i, j + 1, PATCH_ACTION_REMOVE, patches);
 			i--;
-			j--;
-		} else if(cost == *++current + COST_CONSTANT) {
-			patches = patch_create(i, j, PATCH_ACTION_REMOVE, patches);
-			i--;
-		} else if(cost == *(current += destination->lines - 1) + costs[j] - costs[j - 1]) {
-			patches = patch_create(i, j, PATCH_ACTION_ADD, patches);
-			j--;
 		} else {
-			patches = patch_create(i, j, PATCH_ACTION_REPLACE, patches);
-			i--;
-			j--;
+			const cost_t costb = costs[j] - costs[j - 1];
+
+			if(cost == current[-1] + costb) {
+				patches = patch_create(i, j + 1, PATCH_ACTION_ADD, patches);
+				j--;
+			} else {
+				if(cost == current[-destination->lines - 1]) {
+					patches = patch_create(i, j + 1, PATCH_ACTION_NONE, patches);
+				} else {
+					patches = patch_create(i, j + 1, PATCH_ACTION_REPLACE, patches);
+				}
+				i--;
+				j--;
+			}
 		}
 	}
 
+	j++;
 	if(i == 0) {
-		while(j + 1 > 0) {
+		while(j > 0) {
 			patches = patch_create(i, j, PATCH_ACTION_ADD, patches);
 			j--;
 		}
 	} else {
-		while(i > 0) {
+		while(i > 1) {
 			patches = patch_create(i, j, PATCH_ACTION_REMOVE, patches);
 			i--;
 		}
@@ -242,7 +258,7 @@ patch_print(FILE *patch, struct patch *patches,
 	const char *linea = source->begin;
 	const char *lineb = destination->begin;
 	size_t nolinea = 1, lengtha = line_length(linea, source->end);
-	size_t nolineb = 0, lengthb = line_length(lineb, destination->end);
+	size_t nolineb = 1, lengthb = line_length(lineb, destination->end);
 
 	while(patches != NULL) {
 		switch(patches->action) {
