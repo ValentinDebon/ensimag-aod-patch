@@ -155,6 +155,24 @@ patch_print_case_empty_destination(FILE *patch, const struct file_mapping *sourc
 	}
 }
 
+static void
+patch_costs_print(const cost_t *costs, size_t m, size_t n) {
+
+	fputs("     ", stdout);
+	for(size_t j = 0; j <= n; j++) {
+		printf("%4zu ", j);
+	}
+	putchar('\n');
+
+	for(size_t i = 0; i <= m; i++) {
+		printf("%4zu %4zu ", i, i * 10);
+		for(size_t j = 0; j < n; j++) {
+			printf("%4zu ", costs[i * n + j]);
+		}
+		putchar('\n');
+	}
+}
+
 int
 main(int argc, char **argv) {
 	if(argc == 4) {
@@ -166,13 +184,7 @@ main(int argc, char **argv) {
 			if(source.lines != 0) {
 				const cost_t *costs = patch_costs(&source, &destination);
 
-				for(size_t i = 0; i <= source.lines; i++) {
-					printf("%4zu: %4zu ", i, i * 10);
-					for(size_t j = 0; j < destination.lines; j++) {
-						printf("%4zu ", costs[i * destination.lines + j]);
-					}
-					putchar('\n');
-				}
+				patch_costs_print(costs, source.lines, destination.lines);
 			} else {
 				patch_print_case_empty_source(patch, &destination);
 			}
