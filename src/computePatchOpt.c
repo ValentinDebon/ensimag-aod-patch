@@ -8,6 +8,8 @@
 #include <fcntl.h>
 #include <err.h>
 
+#define COST_CONSTANT 10
+
 typedef unsigned long cost_t;
 
 struct file_mapping {
@@ -85,7 +87,7 @@ file_mapping_create(const char *file) {
 	if((fd = open(file, O_RDONLY)) == -1
 		|| fstat(fd, &st) == -1
 		|| (mmaped = mmap(NULL, st.st_size,
-			PROT_READ, MAP_FILE | MAP_PRIVATE, fd, 0)) == MAP_FAILED) {
+			PROT_READ, MAP_PRIVATE, fd, 0)) == MAP_FAILED) {
 		err(EXIT_FAILURE, "file_mapping_create %s", file);
 	}
 
@@ -126,7 +128,7 @@ patch_costs_empty_source(cost_t *costs,
 	while(line < destination->end) {
 		const size_t length = line_length(line, destination->end);
 
-		costsum += 10 + length;
+		costsum += COST_CONSTANT + length;
 		*costs = costsum;
 		costs++;
 
@@ -146,17 +148,17 @@ patch_costs(const struct file_mapping *source,
 
 	do {
 		const size_t length = line_length(line, source->end);
-		*iterator = min(min(iterator[-destination->lines] + 10, 10 * i + *costs),
-			(line_equals(line, length, destination->begin, *costs - 10) ? 0 : *costs) + 10 * (i - 1));
+		*iterator = min(min(iterator[-destination->lines] + COST_CONSTANT, COST_CONSTANT * i + *costs),
+			(line_equals(line, length, destination->begin, *costs - COST_CONSTANT) ? 0 : *costs) + COST_CONSTANT * (i - 1));
 		iterator++;
 
 		for(size_t j = 1; j < destination->lines; j++) {
 			const size_t costb = costs[j] - costs[j - 1];
 			const cost_t append = iterator[-1] + costb;
-			const cost_t removal = iterator[-destination->lines] + 10;
+			const cost_t removal = iterator[-destination->lines] + COST_CONSTANT;
 			cost_t substitution = iterator[-destination->lines - 1];
 
-			if(!line_equals(line, length, destination->begin + (costs[j - 1] - (10 - 1) * j), costb - 10)) {
+			if(!line_equals(line, length, destination->begin + (costs[j - 1] - (COST_CONSTANT - 1) * j), costb - COST_CONSTANT)) {
 				substitution += costb;
 			}
 
@@ -182,7 +184,7 @@ patch_costs_print(FILE *output, const cost_t *costs, size_t m, size_t n) {
 	fputc('\n', output);
 
 	for(size_t i = 0; i <= m; i++) {
-		fprintf(output, "%4zu %4zu ", i, i * 10);
+		fprintf(output, "%4zu %4zu ", i, i * COST_CONSTANT);
 		for(size_t j = 0; j < n; j++) {
 			fprintf(output, "%4zu ", costs[i * n + j]);
 		}
@@ -206,7 +208,7 @@ patch_compute(const cost_t *costs,
 			patches = patch_create(i, j, PATCH_ACTION_NONE, patches);
 			i--;
 			j--;
-		} else if(cost == *++current + 10) {
+		} else if(cost == *++current + COST_CONSTANT) {
 			patches = patch_create(i, j, PATCH_ACTION_REMOVE, patches);
 			i--;
 		} else if(cost == *(current += destination->lines - 1) + costs[j] - costs[j - 1]) {
