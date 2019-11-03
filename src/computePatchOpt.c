@@ -10,7 +10,7 @@
 
 #define COST_CONSTANT 10
 
-typedef unsigned long cost_t;
+typedef unsigned int cost_t;
 
 struct file_mapping {
 	const char * const begin;
@@ -30,9 +30,20 @@ struct patch {
 	} action;
 };
 
+static inline void *
+xmalloc(size_t n) {
+	void *ptr = malloc(n);
+
+	if(ptr == NULL) {
+		err(EXIT_FAILURE, "malloc %zu", n);
+	}
+
+	return ptr;
+}
+
 static struct patch *
 patch_create(size_t i, size_t j, enum patch_action action, struct patch *next) {
-	struct patch *patch = malloc(sizeof(*patch));
+	struct patch *patch = xmalloc(sizeof(*patch));
 
 	patch->next = next;
 	patch->i = i;
@@ -152,7 +163,7 @@ patch_costs_empty_source(cost_t *costs,
 static const cost_t *
 patch_costs(const struct file_mapping *source,
 	const struct file_mapping *destination) {
-	cost_t *costs = malloc(destination->lines * (source->lines + 1) * sizeof(*costs));
+	cost_t *costs = xmalloc(destination->lines * (source->lines + 1) * sizeof(*costs));
 	cost_t *iterator = patch_costs_empty_source(costs, destination);
 	const char *line = source->begin;
 	size_t i = 1;
@@ -263,21 +274,18 @@ patch_print(FILE *patch, struct patch *patches,
 	while(patches != NULL) {
 		switch(patches->action) {
 		case PATCH_ACTION_ADD:
-			// printf("destination line %zu is added after source line %zu\n", patches->j + 1, patches->i);
 			line_reach(&lineb, &lengthb, &nolineb, patches->j, destination->end);
 			fprintf(patch, "+ %zu\n", patches->i);
 			fwrite(lineb, lengthb, 1, patch);
 			fputc('\n', patch);
 			break;
 		case PATCH_ACTION_REMOVE:
-			// printf("source line %zu is removed\n", patches->i);
 			line_reach(&linea, &lengtha, &nolinea, patches->i, source->end);
 			fprintf(patch, "- %zu\n", patches->i);
 			fwrite(linea, lengtha, 1, patch);
 			fputc('\n', patch);
 			break;
 		case PATCH_ACTION_REPLACE:
-			// printf("destination line %zu replaces source line %zu\n", patches->j + 1, patches->i);
 			line_reach(&linea, &lengtha, &nolinea, patches->i, source->end);
 			line_reach(&lineb, &lengthb, &nolineb, patches->j, destination->end);
 			fprintf(patch, "= %zu\n", patches->i);
@@ -287,7 +295,6 @@ patch_print(FILE *patch, struct patch *patches,
 			fputc('\n', patch);
 			break;
 		default: /* PATCH_ACTION_NONE */
-			// printf("source line %zu is identical to destination line %zu\n", patches->i, patches->j + 1);
 			break;
 		}
 
@@ -341,12 +348,15 @@ main(int argc, char **argv) {
 #endif
 
 #ifdef FULL_CLEANUP
-				free(costs);
+				free((void *)costs);
 				while(patches != NULL) {
 					struct patch *next = patches->next;
 					free(patches);
 					patches = next;
 				}
+				fclose(patch);
+				munmap((void *)source.begin, source.end - source.begin);
+				munmap((void *)destination.begin, destination.end - destination.begin);
 #endif
 			} else {
 				patch_print_case_empty_source(patch, &destination);
