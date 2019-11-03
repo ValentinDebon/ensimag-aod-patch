@@ -4,15 +4,15 @@ LDFLAGS=
 
 COMPUTEPATCHOPT=bin/computePatchOpt
 
-.PHONY: all clean test
+.PHONY: all clean doc
 
 all: $(COMPUTEPATCHOPT)
 
 clean:
-	rm -rf bin
+	rm -rf bin doc
 
-test: $(COMPUTEPATCHOPT)
-	$(COMPUTEPATCHOPT) test/computePatchOpt/source test/computePatchOpt/destination patch
+doc:
+	doxygen
 
 bin:
 	mkdir $@

@@ -319,6 +319,19 @@ main(int argc, char **argv) {
 				struct patch *patches = patch_compute(costs, &source, &destination);
 
 				patch_print(patch, patches, &source, &destination);
+
+#ifdef PATCH_COSTS_PRINT
+				patch_costs_print(stdout, costs, source.lines, destination.lines);
+#endif
+
+#ifdef FULL_CLEANUP
+				free(costs);
+				while(patches != NULL) {
+					struct patch *next = patches->next;
+					free(patches);
+					patches = next;
+				}
+#endif
 			} else {
 				patch_print_case_empty_source(patch, &destination);
 			}
