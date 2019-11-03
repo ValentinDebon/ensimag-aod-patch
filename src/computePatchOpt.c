@@ -83,14 +83,19 @@ patch_costs_empty_source(cost_t *costs,
 	return costs;
 }
 
-static inline size_t
-min(size_t a, size_t b) {
+static inline cost_t
+min(cost_t a, cost_t b) {
 	return a < b ? a : b;
 }
 
 static bool
 line_equals(const char *line1, size_t length1,
 	const char *line2, size_t length2) {
+	fputs("comparing: \"", stdout);
+	fwrite(line1, length1, 1, stdout);
+	fputs("\" to \"", stdout);
+	fwrite(line2, length2, 1, stdout);
+	fputs("\"\n", stdout);
 	return length1 == length2 && memcmp(line1, line2, length1) == 0;
 }
 
@@ -104,7 +109,8 @@ patch_costs(const struct file_mapping *source,
 
 	do {
 		const size_t length = line_length(line, source->end);
-		*iterator = min(10 * i, line_equals(line, length, destination->begin, *costs - 10) ? *costs : 0);
+		*iterator = min(min(iterator[-destination->lines] + 10, 10 * i + *costs),
+			(line_equals(line, length, destination->begin, *costs - 10) ? 0 : *costs) + 10 * (i - 1));
 		iterator++;
 
 		for(size_t j = 1; j < destination->lines; j++) {
@@ -113,9 +119,11 @@ patch_costs(const struct file_mapping *source,
 			const cost_t removal = iterator[-destination->lines] + 10;
 			cost_t substitution = iterator[-destination->lines - 1];
 
-			if(!line_equals(line, length, destination->begin + costs[j - 1] - 10 * j, costb - 10)) {
+			if(!line_equals(line, length, destination->begin + (costs[j - 1] - (10 - 1) * j), costb - 10)) {
 				substitution += costb;
 			}
+
+			printf("(%zu, %zu): min(%zu, %zu, %zu) (Lb%zu: %zu)\n", i, j + 1, append, removal, substitution, j + 1, costb);
 
 			*iterator = min(min(append, removal), substitution);
 			iterator++;
@@ -158,7 +166,7 @@ patch_print_case_empty_destination(FILE *patch, const struct file_mapping *sourc
 static void
 patch_costs_print(const cost_t *costs, size_t m, size_t n) {
 
-	fputs("     ", stdout);
+	fputs(" i\\j ", stdout);
 	for(size_t j = 0; j <= n; j++) {
 		printf("%4zu ", j);
 	}
