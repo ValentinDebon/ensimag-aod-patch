@@ -241,19 +241,22 @@ patch_costs(const struct file_mapping *source,
 	size_t i = 1;
 
 	/* Note sur la première ligne (0, j): Cette ligne est ici utilisée pour accéder aux couts,
-	longueurs et lignes de la destination en O(1) et au défaut de cache près. En théorie cela semble
-	être une mauvaise idée car on ajoute un potentiel défaut de cache en costs[0 ... destination->lines - 1]
-	à chaque itération, ainsi que ceux de la comparaison de la ligne. Cependant la comparaison de la ligne compare
+	longueurs et lignes de la destination en O(1). En théorie cela semble être une mauvaise idée
+	car on ajoute un potentiel défaut de cache en costs[0 ... destination->lines - 1] à chaque itération,
+	ainsi que ceux de la comparaison de la ligne. Cependant la comparaison de la ligne compare
 	d'abord les tailles avant d'accéder à la mémoire, et dans immense majorité des cas celles ci diffèrent
 	dès le départ. Ainsi, en pratique on génère moins de défauts de caches qu'une itération totale de la destination.
 	En effet, une version alternative du code avec itération de la destination doublait la durée du programme sur le benchmark 02.
 	*/
 	do {
 		const size_t length = line_length(line, source->end);
+
+		/* Calcul de (i, 1), car il dépend d'une colonne qui n'existe pas mais dont les éléments sont calculables en O(1) */
 		*iterator = min(min(iterator[-destination->lines] + COST_CONSTANT, COST_CONSTANT * i + *costs),
 			(line_equals(line, length, destination->begin, *costs - COST_CONSTANT) ? 0 : *costs) + COST_CONSTANT * (i - 1));
 		iterator++;
 
+		/* Attention! Ici j = 1 correspond à la ligne 2 de la destination, car la colonne (i, 0) n'existe pas! */
 		for(size_t j = 1; j < destination->lines; j++) {
 			const size_t costb = costs[j] - costs[j - 1];
 			const cost_t append = iterator[-1] + costb;
