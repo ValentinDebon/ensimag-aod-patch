@@ -1,3 +1,10 @@
+/**
+ * computePatchOpt.c
+ * @mainpage TP AOD Patch
+ * Cet algorithme calcul un patch de cout optimal.
+ * Son cout est en Θ(n²).
+ * @authors Valentin Debon, Zaineb Tiour
+ */
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
