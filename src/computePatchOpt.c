@@ -264,7 +264,7 @@ patch_compute(const cost_t *costs,
 }
 
 static void
-patch_print(FILE *patch, struct patch *patches, const size_t offset,
+patch_print(FILE *patch, struct patch *patches,
 	const struct file_mapping *source, const struct file_mapping *destination) {
 	const char *linea = source->begin;
 	const char *lineb = destination->begin;
@@ -275,20 +275,20 @@ patch_print(FILE *patch, struct patch *patches, const size_t offset,
 		switch(patches->action) {
 		case PATCH_ACTION_ADD:
 			line_reach(&lineb, &lengthb, &nolineb, patches->j, destination->end);
-			fprintf(patch, "+ %zu\n", patches->i + offset);
+			fprintf(patch, "+ %zu\n", patches->i);
 			fwrite(lineb, lengthb, 1, patch);
 			fputc('\n', patch);
 			break;
 		case PATCH_ACTION_REMOVE:
 			line_reach(&linea, &lengtha, &nolinea, patches->i, source->end);
-			fprintf(patch, "- %zu\n", patches->i + offset);
+			fprintf(patch, "- %zu\n", patches->i);
 			fwrite(linea, lengtha, 1, patch);
 			fputc('\n', patch);
 			break;
 		case PATCH_ACTION_REPLACE:
 			line_reach(&linea, &lengtha, &nolinea, patches->i, source->end);
 			line_reach(&lineb, &lengthb, &nolineb, patches->j, destination->end);
-			fprintf(patch, "= %zu\n", patches->i + offset);
+			fprintf(patch, "= %zu\n", patches->i);
 			fwrite(linea, lengtha, 1, patch);
 			fputc('\n', patch);
 			fwrite(lineb, lengthb, 1, patch);
@@ -329,57 +329,6 @@ patch_print_case_empty_destination(FILE *patch, const struct file_mapping *sourc
 	}
 }
 
-static inline bool
-patch_subdivise(size_t sourcelines, size_t destinationlines) {
-	return sourcelines > 1 && destinationlines > 1
-		&& (sourcelines * destinationlines * sizeof(cost_t)
-			+ (sourcelines + destinationlines) * sizeof(struct patch))
-			>= 12000000000;
-}
-
-static void
-patch_suboptimal(FILE *patch, const size_t offset,
-	const struct file_mapping source, const struct file_mapping destination) {
-
-	if(patch_subdivise(source.lines, destination.lines)) {
-		const char *linea = source.begin;
-		const char *lineb = destination.begin;
-		size_t nolinea = 1, lengtha = line_length(linea, source.end);
-		size_t nolineb = 1, lengthb = line_length(lineb, destination.end);
-		size_t limita = source.lines / 2;
-		size_t limitb = destination.lines / 2;
-
-		line_reach(&linea, &lengtha, &nolinea, limita, source.end);
-		line_reach(&lineb, &lengthb, &nolineb, limitb, destination.end);
-		linea += lengtha + 1;
-		lineb += lengthb + 1;
-
-		patch_suboptimal(patch, offset,
-			(struct file_mapping) { .begin = source.begin, .end = linea, .lines = limita },
-			(struct file_mapping) { .begin = destination.begin, .end = lineb, .lines = limitb });
-
-		patch_suboptimal(patch, offset + limita,
-			(struct file_mapping) { .begin = linea, .end = source.end, .lines = source.lines - limita },
-			(struct file_mapping) { .begin = lineb, .end = destination.end, .lines = destination.lines - limitb });
-	} else {
-		const cost_t *costs = patch_costs(&source, &destination);
-		struct patch *patches = patch_compute(costs, &source, &destination);
-
-		patch_print(patch, patches, offset, &source, &destination);
-
-#ifdef PATCH_COSTS_PRINT
-		patch_costs_print(stdout, costs, source.lines, destination.lines);
-#endif
-
-		free((void *)costs);
-		while(patches != NULL) {
-			struct patch *next = patches->next;
-			free(patches);
-			patches = next;
-		}
-	}
-}
-
 int
 main(int argc, char **argv) {
 	if(argc == 4) {
@@ -389,9 +338,22 @@ main(int argc, char **argv) {
 
 		if(destination.lines != 0) {
 			if(source.lines != 0) {
-				patch_suboptimal(patch, 0, source, destination);
+				const cost_t *costs = patch_costs(&source, &destination);
+				struct patch *patches = patch_compute(costs, &source, &destination);
+
+				patch_print(patch, patches, &source, &destination);
+
+#ifdef PATCH_COSTS_PRINT
+				patch_costs_print(stdout, costs, source.lines, destination.lines);
+#endif
 
 #ifdef FULL_CLEANUP
+				free((void *)costs);
+				while(patches != NULL) {
+					struct patch *next = patches->next;
+					free(patches);
+					patches = next;
+				}
 				fclose(patch);
 				munmap((void *)source.begin, source.end - source.begin);
 				munmap((void *)destination.begin, destination.end - destination.begin);
