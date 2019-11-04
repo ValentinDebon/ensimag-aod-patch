@@ -351,16 +351,16 @@ patch_suboptimal(FILE *patch, const size_t offset,
 
 		line_reach(&linea, &lengtha, &nolinea, limita, source.end);
 		line_reach(&lineb, &lengthb, &nolineb, limitb, destination.end);
-		linea += lengtha + 1;
-		lineb += lengthb + 1;
+		linea += lengtha;
+		lineb += lengthb;
 
 		patch_suboptimal(patch, offset,
 			(struct file_mapping) { .begin = source.begin, .end = linea, .lines = limita },
 			(struct file_mapping) { .begin = destination.begin, .end = lineb, .lines = limitb });
 
 		patch_suboptimal(patch, offset + limita,
-			(struct file_mapping) { .begin = linea, .end = source.end, .lines = source.lines - limita },
-			(struct file_mapping) { .begin = lineb, .end = destination.end, .lines = destination.lines - limitb });
+			(struct file_mapping) { .begin = linea + 1, .end = source.end, .lines = source.lines - limita },
+			(struct file_mapping) { .begin = lineb + 1, .end = destination.end, .lines = destination.lines - limitb });
 	} else {
 		const cost_t *costs = patch_costs(&source, &destination);
 		struct patch *patches = patch_compute(costs, &source, &destination);
