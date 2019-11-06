@@ -1,5 +1,5 @@
 CC=clang
-CFLAGS=-g -std=c99 -Wall -DPATCH_COSTS_PRINT
+CFLAGS=-O3 -std=c99 -Wall
 LDFLAGS=
 
 COMPUTEPATCHOPT=bin/computePatchOpt

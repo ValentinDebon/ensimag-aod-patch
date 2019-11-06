@@ -50,12 +50,14 @@ patch_create(size_t i, size_t j, enum patch_action action, struct patch *next) {
 	patch->j = j;
 	patch->action = action;
 
+/*
 	switch(action) {
 	case PATCH_ACTION_NONE: printf("NONE %zu %zu\n", i, j); break;
 	case PATCH_ACTION_ADD: printf("ADD %zu %zu\n", i, j); break;
 	case PATCH_ACTION_REMOVE: printf("REMOVE %zu %zu\n", i, j); break;
 	case PATCH_ACTION_REPLACE: printf("REPLACE %zu %zu\n", i, j); break;
 	}
+*/
 
 	return patch;
 }
@@ -233,8 +235,8 @@ patch_costs_print(FILE *output, const cost_t *costs, size_t m, size_t n) {
 
 static inline bool
 patch_subdivise(size_t sourcelines, size_t destinationlines) {
-//	return sourcelines > 1 && destinationlines > 1 && (sourcelines * destinationlines) >= 22500000000;
-	return sourcelines > 1 && destinationlines > 1 && (sourcelines * destinationlines) >= 40;
+	return sourcelines > 1 && destinationlines > 1 && (sourcelines * destinationlines) >= 225000000;
+//	return sourcelines > 1 && destinationlines > 1 && (sourcelines * destinationlines) >= 6;
 }
 
 static struct patch *
@@ -256,8 +258,8 @@ patch_compute(struct patch *patches, size_t offseti, size_t offsetj,
 			(struct file_mapping) { .begin = linea + lengtha + 1, .end = source.end, .lines = source.lines - limita },
 			(struct file_mapping) { .begin = lineb + lengthb + 1, .end = destination.end, .lines = destination.lines - limitb });
 
-		limita = patches->i;
-		limitb = patches->j;
+		limita += patches->i;
+		limitb += patches->j;
 		line_reach(&linea, &lengtha, &nolinea, limita, source.end);
 		line_reach(&lineb, &lengthb, &nolineb, limitb, destination.end);
 		patches = patch_destroy(patches);
@@ -298,7 +300,7 @@ patch_compute(struct patch *patches, size_t offseti, size_t offsetj,
 			}
 		}
 
-		patches = patch_create(i + offseti, j + offsetj + 1, PATCH_ACTION_NONE, patches);
+		patches = patch_create(i, j + 1, PATCH_ACTION_NONE, patches);
 
 		free((void *)costs);
 	}
