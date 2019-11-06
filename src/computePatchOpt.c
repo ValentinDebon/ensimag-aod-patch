@@ -50,15 +50,6 @@ patch_create(size_t i, size_t j, enum patch_action action, struct patch *next) {
 	patch->j = j;
 	patch->action = action;
 
-/*
-	switch(action) {
-	case PATCH_ACTION_NONE: printf("NONE %zu %zu\n", i, j); break;
-	case PATCH_ACTION_ADD: printf("ADD %zu %zu\n", i, j); break;
-	case PATCH_ACTION_REMOVE: printf("REMOVE %zu %zu\n", i, j); break;
-	case PATCH_ACTION_REPLACE: printf("REPLACE %zu %zu\n", i, j); break;
-	}
-*/
-
 	return patch;
 }
 
@@ -236,7 +227,6 @@ patch_costs_print(FILE *output, const cost_t *costs, size_t m, size_t n) {
 static inline bool
 patch_subdivise(size_t sourcelines, size_t destinationlines) {
 	return sourcelines > 1 && destinationlines > 1 && (sourcelines * destinationlines) >= 225000000;
-//	return sourcelines > 1 && destinationlines > 1 && (sourcelines * destinationlines) >= 6;
 }
 
 static struct patch *
@@ -289,9 +279,7 @@ patch_compute(struct patch *patches, size_t offseti, size_t offsetj,
 					patches = patch_create(i + offseti, j + offsetj + 1, PATCH_ACTION_ADD, patches);
 					j--;
 				} else {
-					if(cost == current[-destination.lines - 1]) {
-						patches = patch_create(i + offseti, j + offsetj + 1, PATCH_ACTION_NONE, patches);
-					} else {
+					if(cost != current[-destination.lines - 1]) {
 						patches = patch_create(i + offseti, j + offsetj + 1, PATCH_ACTION_REPLACE, patches);
 					}
 					i--;
