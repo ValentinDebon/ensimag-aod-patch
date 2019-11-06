@@ -218,45 +218,75 @@ patch_costs_print(FILE *output, const cost_t *costs, size_t m, size_t n) {
 static inline bool
 patch_subdivise(size_t sourcelines, size_t destinationlines) {
 //	return sourcelines > 1 && destinationlines > 1 && (sourcelines * destinationlines) >= 22500000000;
-	return false;
+	return sourcelines > 1 && destinationlines > 1 && (sourcelines * destinationlines) >= 1000;
 }
 
 static struct patch *
 patch_compute(struct patch *patches, size_t offseti, size_t offsetj,
-	const struct file_mapping *source, const struct file_mapping *destination) {
+	const struct file_mapping source, const struct file_mapping destination) {
+	usleep(10000);
 
-	if(patch_subdivise(source->lines, destination->lines)) {
-		abort();
+	if(patch_subdivise(source.lines, destination.lines)) {
+		const char *linea = source.begin;
+		const char *lineb = destination.begin;
+		size_t nolinea = 1, lengtha = line_length(linea, source.end);
+		size_t nolineb = 1, lengthb = line_length(lineb, destination.end);
+		size_t limita = source.lines / 2;
+		size_t limitb = destination.lines / 2;
+
+		line_reach(&linea, &lengtha, &nolinea, limita, source.end);
+		line_reach(&lineb, &lengthb, &nolineb, limitb, destination.end);
+
+		patches = patch_compute(patches, offseti + limita, offsetj + limitb,
+			(struct file_mapping) { .begin = linea + lengtha + 1, .end = source.end, .lines = source.lines - limita },
+			(struct file_mapping) { .begin = lineb + lengthb + 1, .end = destination.end, .lines = destination.lines - limitb });
+
+		struct patch *dummy = patches;
+		limita += dummy->i;
+		limitb += dummy->j;
+		patches = dummy->next;
+		free(dummy);
+
+		line_reach(&linea, &lengtha, &nolinea, limita, source.end);
+		line_reach(&lineb, &lengthb, &nolineb, limitb, destination.end);
+
+		patches = patch_compute(patches, offseti + limita, offsetj + limitb,
+			(struct file_mapping) { .begin = source.begin, .end = linea, .lines = limita },
+			(struct file_mapping) { .begin = destination.begin, .end = lineb, .lines = limitb });
 	} else {
-		const cost_t *costs = patch_costs(source, destination);
-		size_t i = source->lines;
-		size_t j = destination->lines - 1;
-		offsetj++;
+		const cost_t *costs = patch_costs(&source, &destination);
+		size_t i = source.lines, j = destination.lines - 1;
+
+#ifdef PATCH_COSTS_PRINT
+		patch_costs_print(stdout, costs, source.lines, destination.lines);
+#endif
 
 		while(i != 0 && j != 0) {
-			const cost_t *current = costs + i * destination->lines + j;
+			const cost_t *current = costs + i * destination.lines + j;
 			const cost_t cost = *current;
 
-			if(cost == current[-destination->lines] + COST_CONSTANT) {
-				patches = patch_create(i + offseti, j + offsetj, PATCH_ACTION_REMOVE, patches);
+			if(cost == current[-destination.lines] + COST_CONSTANT) {
+				patches = patch_create(i + offseti, j + offsetj + 1, PATCH_ACTION_REMOVE, patches);
 				i--;
 			} else {
 				const cost_t costb = costs[j] - costs[j - 1];
 
 				if(cost == current[-1] + costb) {
-					patches = patch_create(i + offseti, j + offsetj, PATCH_ACTION_ADD, patches);
+					patches = patch_create(i + offseti, j + offsetj + 1, PATCH_ACTION_ADD, patches);
 					j--;
 				} else {
-					if(cost == current[-destination->lines - 1]) {
-						patches = patch_create(i + offseti, j + offsetj, PATCH_ACTION_NONE, patches);
+					if(cost == current[-destination.lines - 1]) {
+						patches = patch_create(i + offseti, j + offsetj + 1, PATCH_ACTION_NONE, patches);
 					} else {
-						patches = patch_create(i + offseti, j + offsetj, PATCH_ACTION_REPLACE, patches);
+						patches = patch_create(i + offseti, j + offsetj + 1, PATCH_ACTION_REPLACE, patches);
 					}
 					i--;
 					j--;
 				}
 			}
 		}
+
+		patches = patch_create(i + offseti, j + offsetj + 1, PATCH_ACTION_NONE, patches);
 
 		free((void *)costs);
 	}
@@ -266,11 +296,13 @@ patch_compute(struct patch *patches, size_t offseti, size_t offsetj,
 
 struct patch *
 patch_suboptimal(const struct file_mapping *source, const struct file_mapping *destination) {
-	struct patch *patches = patch_compute(NULL, 0, 0, source, destination);
+	struct patch *patches = patch_compute(NULL, 0, 0, *source, *destination);
 
 	if(patches != NULL) {
-		size_t i = patches->i;
-		size_t j = patches->j;
+		size_t i = patches->i, j = patches->j;
+		struct patch *dummy = patches;
+		patches = dummy->next;
+		free(dummy);
 
 		if(i == 0) {
 			while(j > 0) {
@@ -287,60 +319,6 @@ patch_suboptimal(const struct file_mapping *source, const struct file_mapping *d
 
 	return patches;
 }
-/*
-
-static struct patch *
-patch_suboptimal(FILE *patch, struct patch *patches,
-	const struct file_mapping source, const size_t offseta,
-	const struct file_mapping destination, const size_t offsetb) {
-
-	if(patch_subdivise(source.lines, destination.lines)) {
-	} else {
-		const cost_t *costs = patch_costs(&source, &destination);
-		struct patch *patches = patch_compute(costs, &source, offseta, &destination);
-
-		patch_print(patch, patches, offset, &source, &destination);
-
-#ifdef PATCH_COSTS_PRINT
-		patch_costs_print(stdout, costs, source.lines, destination.lines);
-#endif
-
-		free((void *)costs);
-	}
-	if(patch_subdivise(source.lines, destination.lines)) {
-		const char *linea = source.begin;
-		const char *lineb = destination.begin;
-		size_t nolinea = 1, lengtha = line_length(linea, source.end);
-		size_t nolineb = 1, lengthb = line_length(lineb, destination.end);
-		size_t limita = source.lines / 2;
-		size_t limitb = destination.lines / 2;
-
-		line_reach(&linea, &lengtha, &nolinea, limita, source.end);
-		line_reach(&lineb, &lengthb, &nolineb, limitb, destination.end);
-		linea += lengtha;
-		lineb += lengthb;
-
-		patch_suboptimal(patch, offset,
-			(struct file_mapping) { .begin = source.begin, .end = linea, .lines = limita },
-			(struct file_mapping) { .begin = destination.begin, .end = lineb, .lines = limitb });
-
-		patch_suboptimal(patch, offset + limita,
-			(struct file_mapping) { .begin = linea + 1, .end = source.end, .lines = source.lines - limita },
-			(struct file_mapping) { .begin = lineb + 1, .end = destination.end, .lines = destination.lines - limitb });
-	} else {
-		const cost_t *costs = patch_costs(&source, &destination);
-		struct patch *patches = patch_compute(costs, &source, &destination);
-
-		patch_print(patch, patches, offset, &source, &destination);
-
-#ifdef PATCH_COSTS_PRINT
-		patch_costs_print(stdout, costs, source.lines, destination.lines);
-#endif
-
-		free((void *)costs);
-	}
-}
-*/
 
 static void
 patch_print(FILE *patch, const struct patch *patches,
