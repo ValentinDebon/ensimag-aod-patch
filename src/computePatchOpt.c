@@ -226,7 +226,7 @@ patch_costs_print(FILE *output, const cost_t *costs, size_t m, size_t n) {
 
 static inline bool
 patch_subdivise(size_t sourcelines, size_t destinationlines) {
-	return sourcelines > 1 && destinationlines > 1 && (sourcelines * destinationlines) >= 225000000;
+	return sourcelines > 1 && destinationlines > 1 && (sourcelines * destinationlines) >= 3000000000;
 }
 
 static struct patch *
