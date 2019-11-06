@@ -50,7 +50,23 @@ patch_create(size_t i, size_t j, enum patch_action action, struct patch *next) {
 	patch->j = j;
 	patch->action = action;
 
+	switch(action) {
+	case PATCH_ACTION_NONE: printf("NONE %zu %zu\n", i, j); break;
+	case PATCH_ACTION_ADD: printf("ADD %zu %zu\n", i, j); break;
+	case PATCH_ACTION_REMOVE: printf("REMOVE %zu %zu\n", i, j); break;
+	case PATCH_ACTION_REPLACE: printf("REPLACE %zu %zu\n", i, j); break;
+	}
+
 	return patch;
+}
+
+static inline struct patch *
+patch_destroy(struct patch *patches) {
+	struct patch *next = patches->next;
+
+	free(patches);
+
+	return next;
 }
 
 static inline cost_t
@@ -240,39 +256,16 @@ patch_compute(struct patch *patches, size_t offseti, size_t offsetj,
 			(struct file_mapping) { .begin = linea + lengtha + 1, .end = source.end, .lines = source.lines - limita },
 			(struct file_mapping) { .begin = lineb + lengthb + 1, .end = destination.end, .lines = destination.lines - limitb });
 
+		limita = patches->i;
+		limitb = patches->j;
+		line_reach(&linea, &lengtha, &nolinea, limita, source.end);
+		line_reach(&lineb, &lengthb, &nolineb, limitb, destination.end);
+		patches = patch_destroy(patches);
+
 		patches = patch_compute(patches, offseti, offsetj,
 			(struct file_mapping) { .begin = source.begin, .end = linea + lengtha, .lines = limita },
 			(struct file_mapping) { .begin = destination.begin, .end = lineb + lengthb, .lines = limitb });
 	} else {
-/*
-		const char *line = source.begin;
-		size_t length = line_length(line, source.end);
-		size_t noline = offseti + 1;
-
-		printf("Source part (%zu lines)\n", source.lines);
-		while(line < source.end) {
-			printf("%zu (%zu): ", noline, length);
-			fwrite(line, length, 1, stdout);
-			putchar('\n');
-			line += length + 1;
-			length = line_length(line, source.end);
-			noline++;
-		}
-
-		line = destination.begin;
-		length = line_length(line, destination.end);
-		noline = offsetj + 1;
-
-		printf("Destination part (%zu lines)\n", destination.lines);
-		while(line < destination.end) {
-			printf("%zu (%zu): ", noline, length);
-			fwrite(line, length, 1, stdout);
-			putchar('\n');
-			line += length + 1;
-			length = line_length(line, destination.end);
-			noline++;
-		}
-*/
 		const cost_t *costs = patch_costs(&source, &destination);
 		size_t i = source.lines, j = destination.lines - 1;
 
@@ -305,18 +298,7 @@ patch_compute(struct patch *patches, size_t offseti, size_t offsetj,
 			}
 		}
 
-		j++;
-		if(i == 0) {
-			while(j > 0) {
-				patches = patch_create(i + offseti, j + offsetj, PATCH_ACTION_ADD, patches);
-				j--;
-			}
-		} else {
-			while(i > 1) {
-				patches = patch_create(i + offseti, j + offsetj, PATCH_ACTION_REMOVE, patches);
-				i--;
-			}
-		}
+		patches = patch_create(i + offseti, j + offsetj + 1, PATCH_ACTION_NONE, patches);
 
 		free((void *)costs);
 	}
@@ -327,6 +309,23 @@ patch_compute(struct patch *patches, size_t offseti, size_t offsetj,
 struct patch *
 patch_suboptimal(const struct file_mapping *source, const struct file_mapping *destination) {
 	struct patch *patches = patch_compute(NULL, 0, 0, *source, *destination);
+
+	if(patches != NULL) {
+		size_t i = patches->i, j = patches->j;
+		patches = patch_destroy(patches);
+
+		if(i == 0) {
+			while(j > 0) {
+				patches = patch_create(i, j, PATCH_ACTION_ADD, patches);
+				j--;
+			}
+		} else {
+			while(i > 1) {
+				patches = patch_create(i, j, PATCH_ACTION_REMOVE, patches);
+				i--;
+			}
+		}
+	}
 
 	return patches;
 }
@@ -412,9 +411,7 @@ main(int argc, char **argv) {
 
 #ifdef FULL_CLEANUP
 				while(patches != NULL) {
-					struct patch *next = patches->next;
-					free(patches);
-					patches = next;
+					patches = patch_destroy(patches);
 				}
 				fclose(patch);
 				munmap((void *)source.begin, source.end - source.begin);
