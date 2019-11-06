@@ -218,21 +218,20 @@ patch_costs_print(FILE *output, const cost_t *costs, size_t m, size_t n) {
 static inline bool
 patch_subdivise(size_t sourcelines, size_t destinationlines) {
 //	return sourcelines > 1 && destinationlines > 1 && (sourcelines * destinationlines) >= 22500000000;
-	return sourcelines > 1 && destinationlines > 1 && (sourcelines * destinationlines) >= 1000;
+	return sourcelines > 1 && destinationlines > 1 && (sourcelines * destinationlines) >= 40;
 }
 
 static struct patch *
 patch_compute(struct patch *patches, size_t offseti, size_t offsetj,
-	const struct file_mapping source, const struct file_mapping destination) {
-	usleep(10000);
+	struct file_mapping source, struct file_mapping destination) {
 
 	if(patch_subdivise(source.lines, destination.lines)) {
 		const char *linea = source.begin;
+		size_t lengtha = line_length(linea, source.end);
+		size_t nolinea = 1, limita = source.lines / 2;
 		const char *lineb = destination.begin;
-		size_t nolinea = 1, lengtha = line_length(linea, source.end);
-		size_t nolineb = 1, lengthb = line_length(lineb, destination.end);
-		size_t limita = source.lines / 2;
-		size_t limitb = destination.lines / 2;
+		size_t lengthb = line_length(lineb, destination.end);
+		size_t nolineb = 1, limitb = destination.lines / 2;
 
 		line_reach(&linea, &lengtha, &nolinea, limita, source.end);
 		line_reach(&lineb, &lengthb, &nolineb, limitb, destination.end);
@@ -241,19 +240,39 @@ patch_compute(struct patch *patches, size_t offseti, size_t offsetj,
 			(struct file_mapping) { .begin = linea + lengtha + 1, .end = source.end, .lines = source.lines - limita },
 			(struct file_mapping) { .begin = lineb + lengthb + 1, .end = destination.end, .lines = destination.lines - limitb });
 
-		struct patch *dummy = patches;
-		limita += dummy->i;
-		limitb += dummy->j;
-		patches = dummy->next;
-		free(dummy);
-
-		line_reach(&linea, &lengtha, &nolinea, limita, source.end);
-		line_reach(&lineb, &lengthb, &nolineb, limitb, destination.end);
-
-		patches = patch_compute(patches, offseti + limita, offsetj + limitb,
-			(struct file_mapping) { .begin = source.begin, .end = linea, .lines = limita },
-			(struct file_mapping) { .begin = destination.begin, .end = lineb, .lines = limitb });
+		patches = patch_compute(patches, offseti, offsetj,
+			(struct file_mapping) { .begin = source.begin, .end = linea + lengtha, .lines = limita },
+			(struct file_mapping) { .begin = destination.begin, .end = lineb + lengthb, .lines = limitb });
 	} else {
+/*
+		const char *line = source.begin;
+		size_t length = line_length(line, source.end);
+		size_t noline = offseti + 1;
+
+		printf("Source part (%zu lines)\n", source.lines);
+		while(line < source.end) {
+			printf("%zu (%zu): ", noline, length);
+			fwrite(line, length, 1, stdout);
+			putchar('\n');
+			line += length + 1;
+			length = line_length(line, source.end);
+			noline++;
+		}
+
+		line = destination.begin;
+		length = line_length(line, destination.end);
+		noline = offsetj + 1;
+
+		printf("Destination part (%zu lines)\n", destination.lines);
+		while(line < destination.end) {
+			printf("%zu (%zu): ", noline, length);
+			fwrite(line, length, 1, stdout);
+			putchar('\n');
+			line += length + 1;
+			length = line_length(line, destination.end);
+			noline++;
+		}
+*/
 		const cost_t *costs = patch_costs(&source, &destination);
 		size_t i = source.lines, j = destination.lines - 1;
 
@@ -286,7 +305,18 @@ patch_compute(struct patch *patches, size_t offseti, size_t offsetj,
 			}
 		}
 
-		patches = patch_create(i + offseti, j + offsetj + 1, PATCH_ACTION_NONE, patches);
+		j++;
+		if(i == 0) {
+			while(j > 0) {
+				patches = patch_create(i + offseti, j + offsetj, PATCH_ACTION_ADD, patches);
+				j--;
+			}
+		} else {
+			while(i > 1) {
+				patches = patch_create(i + offseti, j + offsetj, PATCH_ACTION_REMOVE, patches);
+				i--;
+			}
+		}
 
 		free((void *)costs);
 	}
@@ -297,25 +327,6 @@ patch_compute(struct patch *patches, size_t offseti, size_t offsetj,
 struct patch *
 patch_suboptimal(const struct file_mapping *source, const struct file_mapping *destination) {
 	struct patch *patches = patch_compute(NULL, 0, 0, *source, *destination);
-
-	if(patches != NULL) {
-		size_t i = patches->i, j = patches->j;
-		struct patch *dummy = patches;
-		patches = dummy->next;
-		free(dummy);
-
-		if(i == 0) {
-			while(j > 0) {
-				patches = patch_create(i, j, PATCH_ACTION_ADD, patches);
-				j--;
-			}
-		} else {
-			while(i > 1) {
-				patches = patch_create(i, j, PATCH_ACTION_REMOVE, patches);
-				i--;
-			}
-		}
-	}
 
 	return patches;
 }
