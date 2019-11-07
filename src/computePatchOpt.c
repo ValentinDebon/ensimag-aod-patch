@@ -2,7 +2,7 @@
  * computePatchOpt.c
  * @mainpage TP AOD Patch
  * Cet algorithme calcul un patch de cout optimal.
- * Son cout est en Θ(n²).
+ * Son cout est un amortissement en diviser pour régner d'un Θ(n²).
  * @authors Valentin Debon, Zaineb Tiour
  */
 #include <stdio.h>
@@ -374,6 +374,12 @@ patch_compute(struct patch *patches,
 	return patches;
 }
 
+/**
+ * Calcul la solution du problème asymtotiquement et termine le patch
+ * @param source Source mapping
+ * @param destination Destination mapping
+ * @return Patch final
+ */
 struct patch *
 patch_suboptimal(const struct file_mapping source, const struct file_mapping destination) {
 	size_t i = 0, j = 0;
