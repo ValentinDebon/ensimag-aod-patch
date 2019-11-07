@@ -1,3 +1,10 @@
+/**
+ * computePatchOpt.c
+ * @mainpage TP AOD Patch
+ * Cet algorithme calcul un patch de cout optimal.
+ * Son cout est en Θ(n²).
+ * @authors Valentin Debon, Zaineb Tiour
+ */
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -8,42 +15,36 @@
 #include <fcntl.h>
 #include <err.h>
 
+/**
+ * Macro factorisant dans le code le cout de suppression de l'équation de Bellman
+ */
 #define COST_CONSTANT 10
 
-typedef unsigned int cost_t;
+typedef unsigned int cost_t; /**< Type stockant les couts */
 
 struct file_mapping {
-	const char * const begin;
-	const char * const end;
-	size_t lines;
+	const char * const begin; /**< Début du fichier, pointeur vers le premier octet */
+	const char * const end;   /**< Fin du fichier, pointeur suivant le dernier octet valide du fichier */
+	size_t lines;             /**< Nombre de lignes du fichier */
 };
 
 struct patch {
-	struct patch *next;
-	size_t i;
-	size_t j;
+	struct patch *next;      /**< Prochain patch, ou NULL si fin de liste */
+	size_t i;                /**< Ligne de la source concernée */
+	size_t j;                /**< Ligne de la destination concernée */
 	enum patch_action {
-		PATCH_ACTION_NONE,
-		PATCH_ACTION_ADD,
-		PATCH_ACTION_REMOVE,
-		PATCH_ACTION_REPLACE
+		PATCH_ACTION_ADD,    /**< Ajouter la ligne j de la destination après la ligne i de la source */
+		PATCH_ACTION_REMOVE, /**< Supprimer la ligne i de la source */
+		PATCH_ACTION_REPLACE /**< Remplacer la ligne i de la source par la ligne j de la destination */
 	} action;
 };
 
-static inline void *
-xmalloc(size_t n) {
-	void *ptr = malloc(n);
-
-	if(ptr == NULL) {
-		err(EXIT_FAILURE, "malloc %zu", n);
-	}
-
-	return ptr;
-}
-
+/**
+ * Fonction d'aide à la création en série des patchs
+ */
 static struct patch *
 patch_create(size_t i, size_t j, enum patch_action action, struct patch *next) {
-	struct patch *patch = xmalloc(sizeof(*patch));
+	struct patch *patch = malloc(sizeof(*patch));
 
 	patch->next = next;
 	patch->i = i;
@@ -53,11 +54,20 @@ patch_create(size_t i, size_t j, enum patch_action action, struct patch *next) {
 	return patch;
 }
 
+/**
+ * Minimum de deux couts
+ */
 static inline cost_t
 min(cost_t a, cost_t b) {
 	return a < b ? a : b;
 }
 
+/**
+ * Taille d'une ligne
+ * @param line Pointeur du début de ligne
+ * @param end Fin de validité du buffer de la ligne, supérieur ou égal à @line
+ * @return la taille de la ligne, ou 0 si la fin a été atteinte
+ */
 static inline size_t
 line_length(const char *line, const char *end) {
 	const char * const next = memchr(line, '\n', end - line);
@@ -65,12 +75,28 @@ line_length(const char *line, const char *end) {
 	return (next != NULL ? next : end) - line;
 }
 
+/**
+ * Comparaison de deux lignes
+ * @param line1 Première ligne
+ * @param length1 Taille de la première ligne
+ * @param line2 Deuxième ligne
+ * @param length2 Taille de la deuxième ligne
+ * @return true si égales, false sinon
+ */
 static inline bool
 line_equals(const char *line1, size_t length1,
 	const char *line2, size_t length2) {
 	return length1 == length2 && memcmp(line1, line2, length1) == 0;
 }
 
+/**
+ * Fonction d'aide afin d'atteindre la ligne limit
+ * @param linep Pointeur vers la ligne (variable en entrée et de retour)
+ * @param lengthp Longueur de la ligne (variable en entrée et de retour)
+ * @param nolinep Numéro de la ligne (variable en entrée et de retour)
+ * @param limit Numéro de ligne à atteindre, si on est déjà au delà on ne fait rien
+ * @param end Fin du buffer de la ligne
+ */
 static inline void
 line_reach(const char **linep, size_t *lengthp, size_t *nolinep,
 	size_t limit, const char *end) {
@@ -89,6 +115,11 @@ line_reach(const char **linep, size_t *lengthp, size_t *nolinep,
 	*nolinep = noline;
 }
 
+/**
+ * Fonction mappant un fichier en mémoire
+ * @param file Chemin du fichier
+ * @return Un mapping du fichier, ou ne retourne pas
+ */
 static struct file_mapping
 file_mapping_create(const char *file) {
 	struct stat st;
@@ -130,6 +161,11 @@ file_mapping_create(const char *file) {
 	}
 }
 
+/**
+ * Version de fopen(3) qui échoue en cas d'erreur
+ * @param file Chemin du fichier
+ * @return le fichier ouvert en écriture, ou ne retourne pas
+ */
 static FILE *
 patch_fopen(const char *file) {
 	FILE *output = fopen(file, "w");
@@ -141,6 +177,15 @@ patch_fopen(const char *file) {
 	return output;
 }
 
+/**
+ * Calcul la première ligne de la matrice de couts
+ * La première ligne correspond à tous les (0, j), soit la somme des couts
+ * d'addition des lignes de la destination. Afin d'indexer rapidement ceux ci
+ * éviter un cas de bordure (edge case?), elle est calculée avant les autres
+ * @param costs Début de la première ligne de la matrice de couts
+ * @param destination Mapping du fichier de destination
+ * @return Début de la seconde ligne de la matrice de couts
+ */
 static cost_t *
 patch_costs_empty_source(cost_t *costs,
 	const struct file_mapping destination) {
@@ -160,26 +205,49 @@ patch_costs_empty_source(cost_t *costs,
 	return costs;
 }
 
+/**
+ * Calcul de la matrice de couts
+ * Sa représentation en mémoire est effectuée sur un espace continue de
+ * taille (lignes de la source + 1) * lignes de la destination chaque ligne
+ * correspond à la ligne (i, 1). En effet, la colonne (i, 0) n'existe par car
+ * peut être calculée en cout constant (i * #COST_CONSTANT) et évite ainsi une
+ * place mémoire supplémentaire au dépit de plus de cas de bordures dans le code.
+ * @param source Mapping du fichier source
+ * @param destination Mapping du fichier destination
+ * @return Un tableau de taille (lignes de la source + 1) * lignes de la destination des couts
+ */
 static const cost_t *
 patch_costs(const struct file_mapping source,
 	const struct file_mapping destination) {
-	cost_t *costs = xmalloc(destination.lines * (source.lines + 1) * sizeof(*costs));
+	cost_t *costs = malloc(destination.lines * (source.lines + 1) * sizeof(*costs));
 	cost_t *iterator = patch_costs_empty_source(costs, destination);
 	const char *line = source.begin;
 	size_t i = 1;
 
+	/* Note sur la première ligne (0, j): Cette ligne est ici utilisée pour accéder aux couts,
+	longueurs et lignes de la destination en O(1). En théorie cela semble être une mauvaise idée
+	car on ajoute un potentiel défaut de cache en costs[0 ... destination->lines - 1] à chaque itération,
+	ainsi que ceux de la comparaison de la ligne. Cependant la comparaison de la ligne compare
+	d'abord les tailles avant d'accéder à la mémoire, et dans immense majorité des cas celles ci diffèrent
+	dès le départ. Ainsi, en pratique on génère moins de défauts de caches qu'une itération totale de la destination.
+	En effet, une version alternative du code avec itération de la destination doublait la durée du programme sur le benchmark 02.
+	*/
 	do {
 		const size_t length = line_length(line, source.end);
+
+		/* Calcul de (i, 1), car il dépend d'une colonne qui n'existe pas mais dont les éléments sont calculables en O(1) */
 		*iterator = min(min(iterator[-destination.lines] + COST_CONSTANT, COST_CONSTANT * i + *costs),
 			(line_equals(line, length, destination.begin, *costs - COST_CONSTANT) ? 0 : *costs) + COST_CONSTANT * (i - 1));
 		iterator++;
 
+		/* Attention! Ici j = 1 correspond à la ligne 2 de la destination, car la colonne (i, 0) n'existe pas! */
 		for(size_t j = 1; j < destination.lines; j++) {
 			const size_t costb = costs[j] - costs[j - 1];
 			const cost_t append = iterator[-1] + costb;
 			const cost_t removal = iterator[-destination.lines] + COST_CONSTANT;
 			cost_t substitution = iterator[-destination.lines - 1];
 
+			/* Ci dessous l'accès au pointeur de ligne en O(1), attention aux caractères '\n', d'où le - 1 */
 			if(!line_equals(line, length, destination.begin + (costs[j - 1] - (COST_CONSTANT - 1) * j), costb - COST_CONSTANT)) {
 				substitution += costb;
 			}
@@ -215,11 +283,28 @@ patch_costs_print(FILE *output, const cost_t *costs, size_t m, size_t n) {
 }
 #endif
 
+/**
+ * Déterminer si on sous-divise le problème
+ * @param sourcelines Nombre de lignes de la source
+ * @param destinationlines Nombre de lignes de la source
+ * @return true si on sous-divise le problème, false sinon
+ */
 static inline bool
 patch_subdivise(size_t sourcelines, size_t destinationlines) {
 	return sourcelines > 1 && destinationlines > 1 && (sourcelines * destinationlines) >= 3000000000;
 }
 
+/**
+ * Calcul d'une sous-solution optimale
+ * @param patches Pile des patches
+ * @param resti ligne d'arrêt
+ * @param restj colonne d'arrêt
+ * @param offseti Offset dans le fichier source final
+ * @param offsetj Offset dans le fichier destination final
+ * @param source Mapping du fichier source
+ * @param destination Mapping du fichier destination
+ * @return Nouvelle pile des patches
+ */
 static struct patch *
 patch_compute(struct patch *patches,
 	size_t *resti, size_t *restj,
@@ -259,6 +344,8 @@ patch_compute(struct patch *patches,
 			const cost_t *current = costs + i * destination.lines + j;
 			const cost_t cost = *current;
 
+			/* On peut en effet remonter avec les couts seulements, sans savoir la
+			décision prise auparavant en testant les valeurs précédentes avec le cout courant */
 			if(cost == current[-destination.lines] + COST_CONSTANT) {
 				patches = patch_create(i + offseti, j + offsetj + 1, PATCH_ACTION_REMOVE, patches);
 				i--;
@@ -292,6 +379,7 @@ patch_suboptimal(const struct file_mapping source, const struct file_mapping des
 	size_t i = 0, j = 0;
 	struct patch *patches = patch_compute(NULL, &i, &j, 0, 0, source, destination);
 
+	/* Ici on remonte la solution jusqu'à (0, 0) depuis (0, j) ou (i, 0) i!=0 et j!=0 */
 	if(i == 0) {
 		while(j > 0) {
 			patches = patch_create(i, j, PATCH_ACTION_ADD, patches);
@@ -307,6 +395,15 @@ patch_suboptimal(const struct file_mapping source, const struct file_mapping des
 	return patches;
 }
 
+/**
+ * Écrit le patch à partir des données d'entrée
+ * L'utilisation du FILE * de la libc peut sembler étrange,
+ * mais la libc bufferise les appels, ce qui permet de gérer simplement ces appels
+ * à cout de fprintf.
+ * @param patch Fichier ouvert en écriture
+ * @param source Mapping du fichier source
+ * @param destination Mapping du fichier destination
+ */
 static void
 patch_print(FILE *patch, const struct patch *patches,
 	const struct file_mapping source, const struct file_mapping destination) {
@@ -338,14 +435,17 @@ patch_print(FILE *patch, const struct patch *patches,
 			fwrite(lineb, lengthb, 1, patch);
 			fputc('\n', patch);
 			break;
-		default: /* PATCH_ACTION_NONE */
-			break;
 		}
 
 		patches = patches->next;
 	}
 }
 
+/**
+ * Cas de bordure: la source est vide, ajout total de la destination
+ * @param patch Fichier ouvert en écriture
+ * @param destination Mapping du fichier destination
+ */
 static void
 patch_print_case_empty_source(FILE *patch, const struct file_mapping destination) {
 	const char *line = destination.begin;
@@ -359,6 +459,11 @@ patch_print_case_empty_source(FILE *patch, const struct file_mapping destination
 	}
 }
 
+/**
+ * Cas de bordure: la destination est vide, destruction totale de la source
+ * @param patch Fichier ouvert en écriture
+ * @param source Mapping du fichier source
+ */
 static void
 patch_print_case_empty_destination(FILE *patch, const struct file_mapping source) {
 	const char *line = source.begin;
@@ -386,6 +491,10 @@ main(int argc, char **argv) {
 
 				patch_print(patch, patches, source, destination);
 
+				/* Par défaut on ne libère pas de mémoire ni rien À LA FIN,
+				c'est relativement inutile et globalement une perte de temps
+				comme nous n'avons pas monopolisé de resource système
+				particulière hors mémoire vive et potentiel swap */
 #ifdef FULL_CLEANUP
 				while(patches != NULL) {
 					struct patch *next = patches->next;
