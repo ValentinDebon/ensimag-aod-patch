@@ -183,17 +183,17 @@ patch_fopen(const char *file) {
  * d'addition des lignes de la destination. Afin d'indexer rapidement ceux ci
  * éviter un cas de bordure (edge case?), elle est calculée avant les autres
  * @param costs Début de la première ligne de la matrice de couts
- * @param destination Mapping du fichier de destination
+ * @param target Mapping du fichier de destination
  * @return Début de la seconde ligne de la matrice de couts
  */
 static cost_t *
 patch_costs_empty_source(cost_t *costs,
-	const struct file_mapping destination) {
-	const char *line = destination.begin;
+	const struct file_mapping target) {
+	const char *line = target.begin;
 	size_t costsum = 0;
 
-	while(line < destination.end) {
-		const size_t length = line_length(line, destination.end);
+	while(line < target.end) {
+		const size_t length = line_length(line, target.end);
 
 		costsum += COST_CONSTANT + length;
 		*costs = costsum;
@@ -213,20 +213,20 @@ patch_costs_empty_source(cost_t *costs,
  * peut être calculée en cout constant (i * #COST_CONSTANT) et évite ainsi une
  * place mémoire supplémentaire au dépit de plus de cas de bordures dans le code.
  * @param source Mapping du fichier source
- * @param destination Mapping du fichier destination
+ * @param target Mapping du fichier destination
  * @return Un tableau de taille (lignes de la source + 1) * lignes de la destination des couts
  */
 static const cost_t *
 patch_costs(const struct file_mapping source,
-	const struct file_mapping destination) {
-	cost_t *costs = malloc(destination.lines * (source.lines + 1) * sizeof(*costs));
-	cost_t *iterator = patch_costs_empty_source(costs, destination);
+	const struct file_mapping target) {
+	cost_t *costs = malloc(target.lines * (source.lines + 1) * sizeof(*costs));
+	cost_t *iterator = patch_costs_empty_source(costs, target);
 	const char *line = source.begin;
 	size_t i = 1;
 
 	/* Note sur la première ligne (0, j): Cette ligne est ici utilisée pour accéder aux couts,
 	longueurs et lignes de la destination en O(1). En théorie cela semble être une mauvaise idée
-	car on ajoute un potentiel défaut de cache en costs[0 ... destination->lines - 1] à chaque itération,
+	car on ajoute un potentiel défaut de cache en costs[0 ... target.lines - 1] à chaque itération,
 	ainsi que ceux de la comparaison de la ligne. Cependant la comparaison de la ligne compare
 	d'abord les tailles avant d'accéder à la mémoire, et dans immense majorité des cas celles ci diffèrent
 	dès le départ. Ainsi, en pratique on génère moins de défauts de caches qu'une itération totale de la destination.
@@ -236,19 +236,19 @@ patch_costs(const struct file_mapping source,
 		const size_t length = line_length(line, source.end);
 
 		/* Calcul de (i, 1), car il dépend d'une colonne qui n'existe pas mais dont les éléments sont calculables en O(1) */
-		*iterator = min(min(iterator[-destination.lines] + COST_CONSTANT, COST_CONSTANT * i + *costs),
-			(line_equals(line, length, destination.begin, *costs - COST_CONSTANT) ? 0 : *costs) + COST_CONSTANT * (i - 1));
+		*iterator = min(min(iterator[-target.lines] + COST_CONSTANT, COST_CONSTANT * i + *costs),
+			(line_equals(line, length, target.begin, *costs - COST_CONSTANT) ? 0 : *costs) + COST_CONSTANT * (i - 1));
 		iterator++;
 
 		/* Attention! Ici j = 1 correspond à la ligne 2 de la destination, car la colonne (i, 0) n'existe pas! */
-		for(size_t j = 1; j < destination.lines; j++) {
+		for(size_t j = 1; j < target.lines; j++) {
 			const size_t costb = costs[j] - costs[j - 1];
 			const cost_t append = iterator[-1] + costb;
-			const cost_t removal = iterator[-destination.lines] + COST_CONSTANT;
-			cost_t substitution = iterator[-destination.lines - 1];
+			const cost_t removal = iterator[-target.lines] + COST_CONSTANT;
+			cost_t substitution = iterator[-target.lines - 1];
 
 			/* Ci dessous l'accès au pointeur de ligne en O(1), attention aux caractères '\n', d'où le - 1 */
-			if(!line_equals(line, length, destination.begin + (costs[j - 1] - (COST_CONSTANT - 1) * j), costb - COST_CONSTANT)) {
+			if(!line_equals(line, length, target.begin + (costs[j - 1] - (COST_CONSTANT - 1) * j), costb - COST_CONSTANT)) {
 				substitution += costb;
 			}
 
@@ -286,12 +286,12 @@ patch_costs_print(FILE *output, const cost_t *costs, size_t m, size_t n) {
 /**
  * Déterminer si on sous-divise le problème
  * @param sourcelines Nombre de lignes de la source
- * @param destinationlines Nombre de lignes de la source
+ * @param targetlines Nombre de lignes de la source
  * @return true si on sous-divise le problème, false sinon
  */
 static inline bool
-patch_subdivise(size_t sourcelines, size_t destinationlines) {
-	return sourcelines > 1 && destinationlines > 1 && (sourcelines * destinationlines) >= 3000000000;
+patch_subdivise(size_t sourcelines, size_t targetlines) {
+	return sourcelines > 1 && targetlines > 1 && (sourcelines * targetlines) >= 3000000000;
 }
 
 /**
@@ -302,51 +302,51 @@ patch_subdivise(size_t sourcelines, size_t destinationlines) {
  * @param offseti Offset dans le fichier source final
  * @param offsetj Offset dans le fichier destination final
  * @param source Mapping du fichier source
- * @param destination Mapping du fichier destination
+ * @param target Mapping du fichier destination
  * @return Nouvelle pile des patches
  */
 static struct patch *
 patch_compute(struct patch *patches,
 	size_t *resti, size_t *restj,
 	size_t offseti, size_t offsetj,
-	struct file_mapping source, struct file_mapping destination) {
+	struct file_mapping source, struct file_mapping target) {
 
-	if(patch_subdivise(source.lines, destination.lines)) {
+	if(patch_subdivise(source.lines, target.lines)) {
 		const char *linea = source.begin;
 		size_t lengtha = line_length(linea, source.end);
 		size_t nolinea = 1, limita = source.lines / 2;
-		const char *lineb = destination.begin;
-		size_t lengthb = line_length(lineb, destination.end);
-		size_t nolineb = 1, limitb = destination.lines / 2;
+		const char *lineb = target.begin;
+		size_t lengthb = line_length(lineb, target.end);
+		size_t nolineb = 1, limitb = target.lines / 2;
 
 		line_reach(&linea, &lengtha, &nolinea, limita, source.end);
-		line_reach(&lineb, &lengthb, &nolineb, limitb, destination.end);
+		line_reach(&lineb, &lengthb, &nolineb, limitb, target.end);
 
 		patches = patch_compute(patches, &limita, &limitb, offseti + limita, offsetj + limitb,
 			(struct file_mapping) { .begin = linea + lengtha + 1, .end = source.end, .lines = source.lines - limita },
-			(struct file_mapping) { .begin = lineb + lengthb + 1, .end = destination.end, .lines = destination.lines - limitb });
+			(struct file_mapping) { .begin = lineb + lengthb + 1, .end = target.end, .lines = target.lines - limitb });
 
 		line_reach(&linea, &lengtha, &nolinea, limita, source.end);
-		line_reach(&lineb, &lengthb, &nolineb, limitb, destination.end);
+		line_reach(&lineb, &lengthb, &nolineb, limitb, target.end);
 
 		patches = patch_compute(patches, resti, restj, offseti, offsetj,
 			(struct file_mapping) { .begin = source.begin, .end = linea + lengtha, .lines = limita },
-			(struct file_mapping) { .begin = destination.begin, .end = lineb + lengthb, .lines = limitb });
+			(struct file_mapping) { .begin = target.begin, .end = lineb + lengthb, .lines = limitb });
 	} else {
-		const cost_t *costs = patch_costs(source, destination);
-		size_t i = source.lines, j = destination.lines - 1;
+		const cost_t *costs = patch_costs(source, target);
+		size_t i = source.lines, j = target.lines - 1;
 
 #ifdef PATCH_COSTS_PRINT
-		patch_costs_print(stdout, costs, source.lines, destination.lines);
+		patch_costs_print(stdout, costs, source.lines, target.lines);
 #endif
 
 		while(i != 0 && j != 0) {
-			const cost_t *current = costs + i * destination.lines + j;
+			const cost_t *current = costs + i * target.lines + j;
 			const cost_t cost = *current;
 
 			/* On peut en effet remonter avec les couts seulements, sans savoir la
 			décision prise auparavant en testant les valeurs précédentes avec le cout courant */
-			if(cost == current[-destination.lines] + COST_CONSTANT) {
+			if(cost == current[-target.lines] + COST_CONSTANT) {
 				patches = patch_create(i + offseti, j + offsetj + 1, PATCH_ACTION_REMOVE, patches);
 				i--;
 			} else {
@@ -356,7 +356,7 @@ patch_compute(struct patch *patches,
 					patches = patch_create(i + offseti, j + offsetj + 1, PATCH_ACTION_ADD, patches);
 					j--;
 				} else {
-					if(cost != current[-destination.lines - 1]) {
+					if(cost != current[-target.lines - 1]) {
 						patches = patch_create(i + offseti, j + offsetj + 1, PATCH_ACTION_REPLACE, patches);
 					}
 					i--;
@@ -377,13 +377,13 @@ patch_compute(struct patch *patches,
 /**
  * Calcul la solution du problème asymtotiquement et termine le patch
  * @param source Source mapping
- * @param destination Destination mapping
+ * @param target Destination mapping
  * @return Patch final
  */
 struct patch *
-patch_suboptimal(const struct file_mapping source, const struct file_mapping destination) {
+patch_suboptimal(const struct file_mapping source, const struct file_mapping target) {
 	size_t i = 0, j = 0;
-	struct patch *patches = patch_compute(NULL, &i, &j, 0, 0, source, destination);
+	struct patch *patches = patch_compute(NULL, &i, &j, 0, 0, source, target);
 
 	/* Ici on remonte la solution jusqu'à (0, 0) depuis (0, j) ou (i, 0) i!=0 et j!=0 */
 	if(i == 0) {
@@ -408,20 +408,20 @@ patch_suboptimal(const struct file_mapping source, const struct file_mapping des
  * à cout de fprintf.
  * @param patch Fichier ouvert en écriture
  * @param source Mapping du fichier source
- * @param destination Mapping du fichier destination
+ * @param target Mapping du fichier destination
  */
 static void
 patch_print(FILE *patch, const struct patch *patches,
-	const struct file_mapping source, const struct file_mapping destination) {
+	const struct file_mapping source, const struct file_mapping target) {
 	const char *linea = source.begin;
-	const char *lineb = destination.begin;
+	const char *lineb = target.begin;
 	size_t nolinea = 1, lengtha = line_length(linea, source.end);
-	size_t nolineb = 1, lengthb = line_length(lineb, destination.end);
+	size_t nolineb = 1, lengthb = line_length(lineb, target.end);
 
 	while(patches != NULL) {
 		switch(patches->action) {
 		case PATCH_ACTION_ADD:
-			line_reach(&lineb, &lengthb, &nolineb, patches->j, destination.end);
+			line_reach(&lineb, &lengthb, &nolineb, patches->j, target.end);
 			fprintf(patch, "+ %zu\n", patches->i);
 			fwrite(lineb, lengthb, 1, patch);
 			fputc('\n', patch);
@@ -434,7 +434,7 @@ patch_print(FILE *patch, const struct patch *patches,
 			break;
 		case PATCH_ACTION_REPLACE:
 			line_reach(&linea, &lengtha, &nolinea, patches->i, source.end);
-			line_reach(&lineb, &lengthb, &nolineb, patches->j, destination.end);
+			line_reach(&lineb, &lengthb, &nolineb, patches->j, target.end);
 			fprintf(patch, "= %zu\n", patches->i);
 			fwrite(linea, lengtha, 1, patch);
 			fputc('\n', patch);
@@ -450,14 +450,14 @@ patch_print(FILE *patch, const struct patch *patches,
 /**
  * Cas de bordure: la source est vide, ajout total de la destination
  * @param patch Fichier ouvert en écriture
- * @param destination Mapping du fichier destination
+ * @param target Mapping du fichier destination
  */
 static void
-patch_print_case_empty_source(FILE *patch, const struct file_mapping destination) {
-	const char *line = destination.begin;
+patch_print_case_empty_source(FILE *patch, const struct file_mapping target) {
+	const char *line = target.begin;
 
-	while(line < destination.end) {
-		const size_t length = line_length(line, destination.end);
+	while(line < target.end) {
+		const size_t length = line_length(line, target.end);
 		fputs("+ 0\n", patch);
 		fwrite(line, length, 1, patch);
 		fputc('\n', patch);
@@ -471,7 +471,7 @@ patch_print_case_empty_source(FILE *patch, const struct file_mapping destination
  * @param source Mapping du fichier source
  */
 static void
-patch_print_case_empty_destination(FILE *patch, const struct file_mapping source) {
+patch_print_case_empty_target(FILE *patch, const struct file_mapping source) {
 	const char *line = source.begin;
 	size_t i = 1;
 
@@ -488,14 +488,14 @@ int
 main(int argc, char **argv) {
 	if(argc == 4) {
 		const struct file_mapping source = file_mapping_create(argv[1]);
-		const struct file_mapping destination = file_mapping_create(argv[2]);
+		const struct file_mapping target = file_mapping_create(argv[2]);
 		FILE *patch = patch_fopen(argv[3]);
 
-		if(destination.lines != 0) {
+		if(target.lines != 0) {
 			if(source.lines != 0) {
-				struct patch *patches = patch_suboptimal(source, destination);
+				struct patch *patches = patch_suboptimal(source, target);
 
-				patch_print(patch, patches, source, destination);
+				patch_print(patch, patches, source, target);
 
 				/* Par défaut on ne libère pas de mémoire ni rien À LA FIN,
 				c'est relativement inutile et globalement une perte de temps
@@ -509,16 +509,16 @@ main(int argc, char **argv) {
 				}
 				fclose(patch);
 				munmap((void *)source.begin, source.end - source.begin);
-				munmap((void *)destination.begin, destination.end - destination.begin);
+				munmap((void *)target.begin, target.end - target.begin);
 #endif
 			} else {
-				patch_print_case_empty_source(patch, destination);
+				patch_print_case_empty_source(patch, target);
 			}
 		} else {
-			patch_print_case_empty_destination(patch, source);
+			patch_print_case_empty_target(patch, source);
 		}
 	} else {
-		fprintf(stderr, "usage: %s <source> <destination> <patch>\n", *argv);
+		fprintf(stderr, "usage: %s <source> <target> <patch>\n", *argv);
 		return EXIT_FAILURE;
 	}
 
