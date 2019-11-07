@@ -290,7 +290,7 @@ patch_costs_print(FILE *output, const cost_t *costs, size_t m, size_t n) {
  * @return true si on sous-divise le problème, false sinon
  */
 static inline bool
-patch_subdivise(size_t sourcelines, size_t targetlines) {
+patch_subdivide(size_t sourcelines, size_t targetlines) {
 	return sourcelines > 1 && targetlines > 1 && (sourcelines * targetlines) >= 3000000000;
 }
 
@@ -311,7 +311,7 @@ patch_compute(struct patch *patches,
 	size_t offseti, size_t offsetj,
 	struct file_mapping source, struct file_mapping target) {
 
-	if(patch_subdivise(source.lines, target.lines)) {
+	if(patch_subdivide(source.lines, target.lines)) {
 		const char *linea = source.begin;
 		size_t lengtha = line_length(linea, source.end);
 		size_t nolinea = 1, limita = source.lines / 2;
