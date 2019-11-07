@@ -53,15 +53,6 @@ patch_create(size_t i, size_t j, enum patch_action action, struct patch *next) {
 	return patch;
 }
 
-static inline struct patch *
-patch_destroy(struct patch *patches) {
-	struct patch *next = patches->next;
-
-	free(patches);
-
-	return next;
-}
-
 static inline cost_t
 min(cost_t a, cost_t b) {
 	return a < b ? a : b;
@@ -152,12 +143,12 @@ patch_fopen(const char *file) {
 
 static cost_t *
 patch_costs_empty_source(cost_t *costs,
-	const struct file_mapping *destination) {
-	const char *line = destination->begin;
+	const struct file_mapping destination) {
+	const char *line = destination.begin;
 	size_t costsum = 0;
 
-	while(line < destination->end) {
-		const size_t length = line_length(line, destination->end);
+	while(line < destination.end) {
+		const size_t length = line_length(line, destination.end);
 
 		costsum += COST_CONSTANT + length;
 		*costs = costsum;
@@ -170,26 +161,26 @@ patch_costs_empty_source(cost_t *costs,
 }
 
 static const cost_t *
-patch_costs(const struct file_mapping *source,
-	const struct file_mapping *destination) {
-	cost_t *costs = xmalloc(destination->lines * (source->lines + 1) * sizeof(*costs));
+patch_costs(const struct file_mapping source,
+	const struct file_mapping destination) {
+	cost_t *costs = xmalloc(destination.lines * (source.lines + 1) * sizeof(*costs));
 	cost_t *iterator = patch_costs_empty_source(costs, destination);
-	const char *line = source->begin;
+	const char *line = source.begin;
 	size_t i = 1;
 
 	do {
-		const size_t length = line_length(line, source->end);
-		*iterator = min(min(iterator[-destination->lines] + COST_CONSTANT, COST_CONSTANT * i + *costs),
-			(line_equals(line, length, destination->begin, *costs - COST_CONSTANT) ? 0 : *costs) + COST_CONSTANT * (i - 1));
+		const size_t length = line_length(line, source.end);
+		*iterator = min(min(iterator[-destination.lines] + COST_CONSTANT, COST_CONSTANT * i + *costs),
+			(line_equals(line, length, destination.begin, *costs - COST_CONSTANT) ? 0 : *costs) + COST_CONSTANT * (i - 1));
 		iterator++;
 
-		for(size_t j = 1; j < destination->lines; j++) {
+		for(size_t j = 1; j < destination.lines; j++) {
 			const size_t costb = costs[j] - costs[j - 1];
 			const cost_t append = iterator[-1] + costb;
-			const cost_t removal = iterator[-destination->lines] + COST_CONSTANT;
-			cost_t substitution = iterator[-destination->lines - 1];
+			const cost_t removal = iterator[-destination.lines] + COST_CONSTANT;
+			cost_t substitution = iterator[-destination.lines - 1];
 
-			if(!line_equals(line, length, destination->begin + (costs[j - 1] - (COST_CONSTANT - 1) * j), costb - COST_CONSTANT)) {
+			if(!line_equals(line, length, destination.begin + (costs[j - 1] - (COST_CONSTANT - 1) * j), costb - COST_CONSTANT)) {
 				substitution += costb;
 			}
 
@@ -199,7 +190,7 @@ patch_costs(const struct file_mapping *source,
 
 		i++;
 		line += length + 1;
-	} while(line < source->end);
+	} while(line < source.end);
 
 	return costs;
 }
@@ -230,7 +221,9 @@ patch_subdivise(size_t sourcelines, size_t destinationlines) {
 }
 
 static struct patch *
-patch_compute(struct patch *patches, size_t offseti, size_t offsetj,
+patch_compute(struct patch *patches,
+	size_t *resti, size_t *restj,
+	size_t offseti, size_t offsetj,
 	struct file_mapping source, struct file_mapping destination) {
 
 	if(patch_subdivise(source.lines, destination.lines)) {
@@ -244,21 +237,18 @@ patch_compute(struct patch *patches, size_t offseti, size_t offsetj,
 		line_reach(&linea, &lengtha, &nolinea, limita, source.end);
 		line_reach(&lineb, &lengthb, &nolineb, limitb, destination.end);
 
-		patches = patch_compute(patches, offseti + limita, offsetj + limitb,
+		patches = patch_compute(patches, &limita, &limitb, offseti + limita, offsetj + limitb,
 			(struct file_mapping) { .begin = linea + lengtha + 1, .end = source.end, .lines = source.lines - limita },
 			(struct file_mapping) { .begin = lineb + lengthb + 1, .end = destination.end, .lines = destination.lines - limitb });
 
-		limita += patches->i;
-		limitb += patches->j;
 		line_reach(&linea, &lengtha, &nolinea, limita, source.end);
 		line_reach(&lineb, &lengthb, &nolineb, limitb, destination.end);
-		patches = patch_destroy(patches);
 
-		patches = patch_compute(patches, offseti, offsetj,
+		patches = patch_compute(patches, resti, restj, offseti, offsetj,
 			(struct file_mapping) { .begin = source.begin, .end = linea + lengtha, .lines = limita },
 			(struct file_mapping) { .begin = destination.begin, .end = lineb + lengthb, .lines = limitb });
 	} else {
-		const cost_t *costs = patch_costs(&source, &destination);
+		const cost_t *costs = patch_costs(source, destination);
 		size_t i = source.lines, j = destination.lines - 1;
 
 #ifdef PATCH_COSTS_PRINT
@@ -288,7 +278,8 @@ patch_compute(struct patch *patches, size_t offseti, size_t offsetj,
 			}
 		}
 
-		patches = patch_create(i, j + 1, PATCH_ACTION_NONE, patches);
+		*resti += i;
+		*restj += j + 1;
 
 		free((void *)costs);
 	}
@@ -297,23 +288,19 @@ patch_compute(struct patch *patches, size_t offseti, size_t offsetj,
 }
 
 struct patch *
-patch_suboptimal(const struct file_mapping *source, const struct file_mapping *destination) {
-	struct patch *patches = patch_compute(NULL, 0, 0, *source, *destination);
+patch_suboptimal(const struct file_mapping source, const struct file_mapping destination) {
+	size_t i = 0, j = 0;
+	struct patch *patches = patch_compute(NULL, &i, &j, 0, 0, source, destination);
 
-	if(patches != NULL) {
-		size_t i = patches->i, j = patches->j;
-		patches = patch_destroy(patches);
-
-		if(i == 0) {
-			while(j > 0) {
-				patches = patch_create(i, j, PATCH_ACTION_ADD, patches);
-				j--;
-			}
-		} else {
-			while(i > 1) {
-				patches = patch_create(i, j, PATCH_ACTION_REMOVE, patches);
-				i--;
-			}
+	if(i == 0) {
+		while(j > 0) {
+			patches = patch_create(i, j, PATCH_ACTION_ADD, patches);
+			j--;
+		}
+	} else {
+		while(i > 1) {
+			patches = patch_create(i, j, PATCH_ACTION_REMOVE, patches);
+			i--;
 		}
 	}
 
@@ -322,29 +309,29 @@ patch_suboptimal(const struct file_mapping *source, const struct file_mapping *d
 
 static void
 patch_print(FILE *patch, const struct patch *patches,
-	const struct file_mapping *source, const struct file_mapping *destination) {
-	const char *linea = source->begin;
-	const char *lineb = destination->begin;
-	size_t nolinea = 1, lengtha = line_length(linea, source->end);
-	size_t nolineb = 1, lengthb = line_length(lineb, destination->end);
+	const struct file_mapping source, const struct file_mapping destination) {
+	const char *linea = source.begin;
+	const char *lineb = destination.begin;
+	size_t nolinea = 1, lengtha = line_length(linea, source.end);
+	size_t nolineb = 1, lengthb = line_length(lineb, destination.end);
 
 	while(patches != NULL) {
 		switch(patches->action) {
 		case PATCH_ACTION_ADD:
-			line_reach(&lineb, &lengthb, &nolineb, patches->j, destination->end);
+			line_reach(&lineb, &lengthb, &nolineb, patches->j, destination.end);
 			fprintf(patch, "+ %zu\n", patches->i);
 			fwrite(lineb, lengthb, 1, patch);
 			fputc('\n', patch);
 			break;
 		case PATCH_ACTION_REMOVE:
-			line_reach(&linea, &lengtha, &nolinea, patches->i, source->end);
+			line_reach(&linea, &lengtha, &nolinea, patches->i, source.end);
 			fprintf(patch, "- %zu\n", patches->i);
 			fwrite(linea, lengtha, 1, patch);
 			fputc('\n', patch);
 			break;
 		case PATCH_ACTION_REPLACE:
-			line_reach(&linea, &lengtha, &nolinea, patches->i, source->end);
-			line_reach(&lineb, &lengthb, &nolineb, patches->j, destination->end);
+			line_reach(&linea, &lengtha, &nolinea, patches->i, source.end);
+			line_reach(&lineb, &lengthb, &nolineb, patches->j, destination.end);
 			fprintf(patch, "= %zu\n", patches->i);
 			fwrite(linea, lengtha, 1, patch);
 			fputc('\n', patch);
@@ -360,11 +347,11 @@ patch_print(FILE *patch, const struct patch *patches,
 }
 
 static void
-patch_print_case_empty_source(FILE *patch, const struct file_mapping *destination) {
-	const char *line = destination->begin;
+patch_print_case_empty_source(FILE *patch, const struct file_mapping destination) {
+	const char *line = destination.begin;
 
-	while(line < destination->end) {
-		const size_t length = line_length(line, destination->end);
+	while(line < destination.end) {
+		const size_t length = line_length(line, destination.end);
 		fputs("+ 0\n", patch);
 		fwrite(line, length, 1, patch);
 		fputc('\n', patch);
@@ -373,12 +360,12 @@ patch_print_case_empty_source(FILE *patch, const struct file_mapping *destinatio
 }
 
 static void
-patch_print_case_empty_destination(FILE *patch, const struct file_mapping *source) {
-	const char *line = source->begin;
+patch_print_case_empty_destination(FILE *patch, const struct file_mapping source) {
+	const char *line = source.begin;
 	size_t i = 1;
 
-	while(line < source->end) {
-		const size_t length = line_length(line, source->end);
+	while(line < source.end) {
+		const size_t length = line_length(line, source.end);
 		fprintf(patch, "- %zu\n", i);
 		fwrite(line, length, 1, patch);
 		fputc('\n', patch);
@@ -395,23 +382,25 @@ main(int argc, char **argv) {
 
 		if(destination.lines != 0) {
 			if(source.lines != 0) {
-				struct patch *patches = patch_suboptimal(&source, &destination);
+				struct patch *patches = patch_suboptimal(source, destination);
 
-				patch_print(patch, patches, &source, &destination);
+				patch_print(patch, patches, source, destination);
 
 #ifdef FULL_CLEANUP
 				while(patches != NULL) {
-					patches = patch_destroy(patches);
+					struct patch *next = patches->next;
+					free(patches);
+					patches = next;
 				}
 				fclose(patch);
 				munmap((void *)source.begin, source.end - source.begin);
 				munmap((void *)destination.begin, destination.end - destination.begin);
 #endif
 			} else {
-				patch_print_case_empty_source(patch, &destination);
+				patch_print_case_empty_source(patch, destination);
 			}
 		} else {
-			patch_print_case_empty_destination(patch, &source);
+			patch_print_case_empty_destination(patch, source);
 		}
 	} else {
 		fprintf(stderr, "usage: %s <source> <destination> <patch>\n", *argv);
